@@ -1,0 +1,13 @@
+# Jekyll / GitHub Pages
+_site/
+.jekyll-cache/
+.jekyll-metadata
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
