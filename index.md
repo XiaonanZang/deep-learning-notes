@@ -10,6 +10,14 @@ and a working, commented implementation you can run.
 
 ## Contents
 
+**Foundations**
+
+- [The PyTorch Module Pattern](pytorch-module-pattern.html) — the one Python-class
+  pattern every from-scratch model uses: `__init__`, `self`, `nn.Parameter`, `forward`,
+  and how `.parameters()` feeds the optimizer.
+
+**Architectures**
+
 - [Transformer Architecture](transformers.html) — self-attention, softmax stability,
   multi-head attention, and the full encoder block, built step by step from token
   embeddings to output.
