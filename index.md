@@ -15,6 +15,11 @@ and a working, commented implementation you can run.
 - [The PyTorch Module Pattern](pytorch-module-pattern.html) — the one Python-class
   pattern every from-scratch model uses: `__init__`, `self`, `nn.Parameter`, `forward`,
   and how `.parameters()` feeds the optimizer.
+- [Broadcasting in PyTorch](broadcasting.html) — the two rules for combining tensors of
+  different shapes, the `keepdim` and outer-product bugs, and `expand` vs `repeat`.
+- [Activations, Losses, Optimizers, and Schedulers](activations-losses-optimizers.html) —
+  a training-loop briefing: nonlinearities, cross-entropy and InfoNCE from scratch, and
+  the AdamW + warmup + cosine recipe.
 
 **Architectures**
 
