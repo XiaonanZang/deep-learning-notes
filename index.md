@@ -31,6 +31,16 @@ and a working, commented implementation you can run.
   — treating an image as a sequence of patches and feeding it through a standard
   transformer encoder.
 
+**Cold Drills**
+
+Timed, blank-file implementation exercises. Each one pairs a realistic first attempt with a
+critique and a corrected, runnable solution — training the gap between *understanding* a
+mechanism and *typing it correctly under time pressure*.
+
+- [Multi-Head Attention from Scratch](https://xiaonanzang.github.io/deep-learning-notes/cold-drill-multi-head-attention.html)
+  — implement multi-head self-attention and a numerically stable softmax from scratch, with a
+  worked critique of the six most common bugs.
+
 ---
 
 *These notes are written to be read in short sittings. Each section stands on its own.*

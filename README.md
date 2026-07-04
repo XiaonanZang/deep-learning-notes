@@ -25,6 +25,15 @@ working, commented implementation you can run.
 - **[Vision Transformers (ViT)](vision-transformers.md)** — treating an image as a
   sequence of patches and feeding it through a standard transformer encoder.
 
+### Cold Drills
+
+Timed, blank-file implementation exercises — a realistic first attempt, a critique, and a
+corrected runnable solution.
+
+- **[Multi-Head Attention from Scratch](cold-drill-multi-head-attention.md)** — implement
+  multi-head self-attention and a numerically stable softmax from scratch, with a worked
+  critique of the six most common bugs.
+
 ## Reading
 
 These notes are published via GitHub Pages for clean reading on any device
