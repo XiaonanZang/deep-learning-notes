@@ -31,6 +31,7 @@ this is the reason the FFN in the transformer note is `Linear → GELU → Linea
 back-to-back linears.
 
 ```python
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,6 +65,34 @@ def softmax(x, dim=-1):
 
 Rule of thumb: **ReLU/GELU between hidden linears; softmax for a categorical output or
 attention weights; sigmoid for a single independent probability.**
+
+### From scratch
+
+Most of these are one or two lines — which is exactly why an interviewer might hand you one
+to check you *understand* it rather than reach for `F.`. All verified to match the built-in.
+
+```python
+def relu(x):
+    return x.clamp(min=0)                 # max(0, x), elementwise
+
+def sigmoid(x):
+    return 1 / (1 + torch.exp(-x))        # squash to (0, 1)
+
+def tanh(x):
+    return 2 * sigmoid(2 * x) - 1         # zero-centred; = 2σ(2x) − 1
+
+def gelu(x):                              # exact GELU
+    return 0.5 * x * (1 + torch.erf(x / math.sqrt(2)))
+
+def gelu_tanh(x):                         # the tanh approximation many impls ship
+    return 0.5 * x * (1 + torch.tanh(math.sqrt(2/math.pi) * (x + 0.044715 * x**3)))
+```
+
+**Softmax** is the one to be careful with — it needs the max-subtraction for stability, and
+it is already written from scratch above (the version inside attention). The others are safe
+to type naively; the only real gotcha is **naive `sigmoid` can overflow for large negative
+`x`** (`exp(-x)` explodes), which is why `logsigmoid` / `bce_with_logits` exist for the
+loss path. For a plain forward activation the naive form is fine.
 
 ---
 
@@ -131,6 +160,66 @@ def info_nce(z1, z2, temperature=0.07):
 
 The trick to remember: **contrastive learning is just cross-entropy where the "classes"
 are the other items in the batch and the label is the diagonal.**
+
+---
+
+## 2b. Losses from scratch — the cold-drill target
+
+The versions above call `F.*` built-ins. In a live coding test you may have to *write the
+math itself*, with no built-in to lean on. These are the "type this cold" targets: each is
+runnable and verified to match the PyTorch built-in. Drill them from a blank file, then
+check against these.
+
+### Cross-entropy from scratch
+
+CE = `-log p[target]`, where `p = softmax(logits)`. The whole game is doing it in
+**log-space** so you never compute `log(softmax(...))` directly (that underflows).
+
+```python
+def cross_entropy(logits, targets):
+    # logits (B, C) raw scores; targets (B,) integer class indices
+    logp = logits - logits.logsumexp(dim=-1, keepdim=True)   # = log_softmax, stable
+    return -logp[torch.arange(len(targets)), targets].mean() # pick the target's log-prob
+```
+
+**Gotcha:** work in log-space via `logsumexp`; never `torch.log(softmax(x))`. The
+`arange`-plus-`targets` fancy-index is how you pull one entry per row.
+
+### MSE from scratch
+
+Mean of the squared residuals. Nothing subtle — but say "mean over *all* elements" out loud.
+
+```python
+def mse_loss(pred, y):
+    return ((pred - y) ** 2).mean()
+```
+
+**Gotcha:** `.mean()` averages over every element (batch × features). Use `.sum()` only if
+you specifically want unaveraged loss.
+
+### BCE (with logits) from scratch
+
+Binary cross-entropy fused with the sigmoid, in its numerically stable form. The naive
+`-(y*log(σ(z)) + (1-y)*log(1-σ(z)))` overflows for large `|z|`; the identity below never does.
+
+```python
+def bce_with_logits(z, y):
+    # z: raw logits, y: 0/1 targets, same shape
+    # stable form of -[y·logσ(z) + (1-y)·logσ(-z)]
+    return (z.clamp(min=0) - z * y + torch.log1p(torch.exp(-z.abs()))).mean()
+```
+
+**Gotcha:** take logits, not probabilities — the `clamp`/`abs` trick is what makes it stable,
+which is exactly why `binary_cross_entropy_with_logits` exists over `sigmoid` + `BCELoss`.
+
+### InfoNCE from scratch
+
+Already written from scratch in §2 above (it is the one contrastive loss worth drilling for
+this interviewer). It is the fourth cold-drill target — **cross-entropy over a cosine-similarity
+matrix, label = the diagonal.** Kept in one place to avoid a second copy.
+
+**One-line recall for all four:** CE = pick the target's log-prob in log-space · MSE = mean
+squared residual · BCE = stable logit form · InfoNCE = CE over similarities, label = diagonal.
 
 ---
 
