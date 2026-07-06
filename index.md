@@ -40,6 +40,9 @@ mechanism and *typing it correctly under time pressure*.
 - [Multi-Head Attention from Scratch](https://xiaonanzang.github.io/deep-learning-notes/cold-drill-multi-head-attention.html)
   — implement multi-head self-attention and a numerically stable softmax from scratch, with a
   worked critique of the six most common bugs.
+- [Multi-Head Attention — Spaced Repetition (Pass 2)](https://xiaonanzang.github.io/deep-learning-notes/cold-drill-multi-head-attention-2.html)
+  — the same problem re-attempted cold days later. The design bugs are fixed, but it still does
+  not run — a worked example of how the failure *moves* from design to execution precision.
 
 ---
 
