@@ -277,6 +277,61 @@ about the math or the output; it only removes recomputation. The causal mask is 
 during cached generation — the new query is the last position, so it can legally see the entire
 cache.
 
+Made concrete: add an incremental `step` path that takes **one** new token plus the layer's
+cached `(K, V)`, appends this token's key/value, and attends the single new query over the whole
+cache. No mask — the one query is the newest position, so it may see everything stored.
+
+```python
+class MultiHeadAttention(MultiHeadAttention):        # add a step() method to the class above
+    def step(self, x_new, cache):                    # x_new: (B, 1, D); cache: (K, V) or None
+        B, _, D = x_new.shape
+        q = self._heads(self.W_Q(x_new))             # (B, h, 1, Dk)  query for the new token only
+        k = self._heads(self.W_K(x_new))             # (B, h, 1, Dk)
+        v = self._heads(self.W_V(x_new))
+        if cache is not None:
+            k = torch.cat([cache[0], k], dim=2)      # append new key to the cached keys  -> (B, h, t+1, Dk)
+            v = torch.cat([cache[1], v], dim=2)      # append new value
+        out, _ = scaled_dot_product_attention(q, k, v, mask=None)   # 1 query over all t+1 keys
+        out = out.transpose(1, 2).contiguous().view(B, 1, D)
+        return self.W_O(out), (k, v)                 # return output AND the grown cache
+
+class GPTBlock(GPTBlock):                            # matching step() for the block
+    def step(self, x_new, cache):
+        a, cache = self.self_attn.step(self.ln1(x_new), cache)
+        x_new = x_new + a
+        x_new = x_new + self.ffn(self.ln2(x_new))
+        return x_new, cache
+
+@torch.no_grad()
+def generate_cached(model, ids, n_new):
+    B, T = ids.shape
+    caches = [None] * len(model.blocks)
+    # prefill: feed the prompt one token at a time to seed every layer's cache
+    for t in range(T):
+        x = model.tok(ids[:, t:t+1]) + model.pos(torch.arange(t, t+1))
+        for i, blk in enumerate(model.blocks):
+            x, caches[i] = blk.step(x, caches[i])
+    last = model.head(model.norm(x))
+    # decode: one new token per step, feeding ONLY that token (the cache holds the rest)
+    for t in range(T, T + n_new):
+        nxt = last[:, -1, :].argmax(-1, keepdim=True)
+        ids = torch.cat([ids, nxt], dim=1)
+        x = model.tok(nxt) + model.pos(torch.arange(t, t+1))
+        for i, blk in enumerate(model.blocks):
+            x, caches[i] = blk.step(x, caches[i])
+        last = model.head(model.norm(x))
+    return ids
+
+# proof: the cache changes speed, not output
+torch.manual_seed(0)
+gpt = TinyGPT(vocab=50, D=32, h=4, L=2)
+start = torch.randint(0, 50, (1, 3))
+assert torch.equal(generate(gpt, start, 6), generate_cached(gpt, start, 6))   # identical tokens
+```
+
+(The `class X(X)` trick just tacks the new method onto the class defined earlier so the note reads
+top-to-bottom; in real code it is one class body.)
+
 ---
 
 ## The one bridge worth carrying
