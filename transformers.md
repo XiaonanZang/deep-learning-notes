@@ -484,6 +484,12 @@ class TransformerEncoder(nn.Module):
         # moves BatchNorm's running_mean/running_var. Rule: fixed tensors a module needs → register_buffer.
         self.register_buffer('pos_enc', sinusoidal_encoding(max_len, D))   # fixed positional table (not learned)
         self.layers    = nn.ModuleList([EncoderLayer(D, h) for _ in range(num_layers)])
+        # Final LayerNorm — REQUIRED for a pre-norm stack. Each layer adds its sub-layer output to
+        # an un-normalized residual stream (x = x + sublayer(LN(x))), so the residual is never
+        # normalized inside the stack and the last layer's output leaves un-normalized. One LayerNorm
+        # here cleans it up before it exits the encoder. (GPT-2 calls this ln_f; the ViT note applies
+        # the same final norm before its head.) A post-norm stack would not need this.
+        self.norm      = nn.LayerNorm(D)
 
     def forward(self, token_ids, mask=None):
         # token_ids: (B, T) — integer token indices
@@ -497,6 +503,7 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:                                 # pass through each encoder layer
             x = layer(x, mask)
 
+        x = self.norm(x)                                          # (B, T, D) final pre-norm cleanup
         return x                                                  # (B, T, D) contextual representations
 
 
