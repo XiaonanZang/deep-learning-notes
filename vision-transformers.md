@@ -311,7 +311,52 @@ assert logits.shape == (B, num_classes)
 
 ---
 
-## 5. The takeaway: attention is attention
+## 5. Two things called "embedding": input projection vs output latent
+
+"Embedding" is overloaded. In a ViT it names two different tensors at opposite ends of the
+network, and it is worth pinning down which is which — because when people say a "CLIP
+embedding" or "DINO features," they mean the *second* one, not the first.
+
+**(a) Input embedding — the front-end projection.** The `PatchEmbed` + CLS + pos stack that
+turns pixels into the `(B, 197, D)` token sequence. In a *language* model this is the
+`nn.Embedding` lookup table (token ID → vector); a ViT has no vocabulary, so the analog is
+the learned `Conv2d` patch projection. Either way it is **learned** — an `nn.Parameter`
+trained by backprop — and it sits *before* the encoder. (This is the "does the embedding get
+trained?" answer: yes, because it is a Parameter. Contrast the fixed sinusoidal positional
+table in the transformer note, which is a *buffer* — also model state, saved and moved with
+the model, but never trained.)
+
+**(b) Output embedding — the latent representation.** The encoder's *output*: the CLS vector
+`(B, D)`, or the full `(B, 197, D)` patch tokens. Each vector now encodes global context from
+the whole image. This is the model's *product* — a point in a latent space you can compare,
+retrieve, cluster, or classify. Also called "features," "representation," "hidden state," or
+simply "the embedding."
+
+| | Input embedding | Output embedding |
+|---|---|---|
+| ViT | patch projection (`Conv2d`) + CLS + pos | encoder output: CLS `(B, D)` or patch tokens |
+| Text | `nn.Embedding` lookup (ID → vector) | contextual hidden states `(B, T, D)` |
+| Where | before the encoder | after the encoder |
+| Learned? | yes (`nn.Parameter`) | it *is* the computed output, not a stored weight |
+| Role | make tokens | the latent representation you actually use |
+
+**DINO and CLIP mean (b).** Their "embeddings" are the *output* latent, never the input
+projection:
+
+- **CLIP** — a ViT image encoder and a text encoder each produce a pooled output vector,
+  projected into a *shared* latent space and trained with a **contrastive (InfoNCE)** loss so
+  that matching image↔text pairs land close and mismatched pairs land far apart. The "CLIP
+  embedding" is that output vector. (Same loss family as the InfoNCE drill item.)
+- **DINO / DINOv2** — a self-supervised ViT whose *output* CLS / patch tokens are used
+  directly as features for kNN, linear probing, and segmentation. No labels, no classification
+  head — the latent representation itself is the deliverable.
+
+**One line:** the input embedding *makes* the tokens; the output embedding is what the model
+learned to *say* about them — and it is the output that retrieval, CLIP, and DINO consume.
+
+---
+
+## 6. The takeaway: attention is attention
 
 ViT proves that the same self-attention block that resolves "The animal... it" in text
 also reads patch-to-patch relationships in images — the *same* encoder architecture, with
