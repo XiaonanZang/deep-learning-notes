@@ -180,6 +180,39 @@ tgt, enc_out = torch.randn(B, T_dec, D), torch.randn(B, T_enc, D)
 print(DecoderLayer(D, h)(tgt, enc_out, causal_mask(T_dec)).shape)   # torch.Size([2, 6, 32])
 ```
 
+### What exactly is `enc_out`?
+
+"The encoder output" is ambiguous, so pin it down: **`enc_out` is the entire `(B, T_src, D)` output
+of the *top* (last) encoder layer — one contextual vector per source token.** It is *not* a pooled
+summary, *not* the CLS token, *not* a middle layer. In cross-attention it is projected into the keys
+and values (`W_K(enc_out)`, `W_V(enc_out)`), so there are `T_src` keys/values — one per source token —
+and the target's queries attend over all of them.
+
+Two facts that resolve most of the confusion:
+
+- **It is computed once.** The source runs through the whole encoder stack; the final layer's output
+  *is* `enc_out`. It does not change per decoder step or per decoder layer.
+- **The same `enc_out` feeds every decoder layer's cross-attention.** One shared source-side memory,
+  read by the entire decoder stack.
+
+```python
+# enc_out: the encoder's full final-layer sequence — one vector per source token.
+enc_out = torch.randn(B, T_enc, D)          # (B, T_src, D)  (here a stand-in for the encoder output)
+
+layers = [DecoderLayer(D, h) for _ in range(2)]
+y = tgt
+for layer in layers:
+    y = layer(y, enc_out, causal_mask(T_dec))   # SAME enc_out passed into every decoder layer
+    # Q length follows the target (T_dec); K/V length follows enc_out (T_enc) -> rectangular scores
+print("target:", tuple(tgt.shape), " enc_out:", tuple(enc_out.shape), " out:", tuple(y.shape))
+# target: (2, 6, 32)  enc_out: (2, 5, 32)  out: (2, 6, 32)
+```
+
+**Translation picture:** source *"je suis étudiant"* (3 tokens) → `enc_out` is **3 vectors** `(B, 3, D)`,
+each a context-aware representation of one French token. As the decoder generates English, every
+target position's cross-attention looks at those 3 French vectors to decide what to emit. `enc_out`
+*is* those vectors — the full set, not a selection.
+
 ---
 
 ## 5. Decoder-only (GPT) vs encoder-decoder
