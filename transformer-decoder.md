@@ -263,21 +263,36 @@ class TinyGPT(nn.Module):
         self.blocks = nn.ModuleList([GPTBlock(D, h) for _ in range(L)])
         self.norm = nn.LayerNorm(D)
         self.head = nn.Linear(D, vocab)            # project D -> vocab logits (the "LM head")
-    def forward(self, ids):                        # ids: (B, T)
+    def forward(self, ids):                        # ids: (B, T) integer token ids
         B, T = ids.shape
-        x = self.tok(ids) + self.pos(torch.arange(T))
-        m = causal_mask(T)
+        x = self.tok(ids) + self.pos(torch.arange(T))  # token emb + position emb, both (B, T, D)
+        m = causal_mask(T)                         # (T, T): every position sees only itself + the past
         for blk in self.blocks:
-            x = blk(x, m)
+            x = blk(x, m)                          # causal self-attn + FFN, stacked L times
+        # LM head: for EVERY position t, a distribution over the vocab for "the token after t".
         return self.head(self.norm(x))             # (B, T, vocab)
 
-@torch.no_grad()
+@torch.no_grad()                                   # inference only — no gradients, no training
 def generate(model, ids, n_new):
+    # ids: (B, T0) the PROMPT tokens. One new token is produced per loop, growing the sequence.
     for _ in range(n_new):
-        logits = model(ids)                        # (B, T, vocab) — recomputes ALL T positions
-        nxt = logits[:, -1, :].argmax(-1, keepdim=True)   # greedy: highest-prob token at the last position
-        ids = torch.cat([ids, nxt], dim=1)         # append and feed back in
-    return ids
+        # STEP 1 — run the model on the WHOLE sequence so far. It returns a next-token
+        #   distribution for every position; we get (B, T, vocab).
+        #   (Naive: this recomputes all T positions every step — that is what §7's KV cache fixes.)
+        logits = model(ids)                        # (B, T, vocab)
+
+        # STEP 2 — we only want the prediction for the token that comes AFTER the current
+        #   sequence, which is produced at the LAST position. Slice that row out.
+        last_logits = logits[:, -1, :]             # (B, vocab)
+
+        # STEP 3 — choose the next token. Greedy decoding = argmax (highest-probability token).
+        #   keepdim=True makes it (B, 1) so it can be concatenated onto the token axis.
+        nxt = last_logits.argmax(dim=-1, keepdim=True)   # (B, 1)
+
+        # STEP 4 — append the new token. It becomes part of the context for the next
+        #   iteration; feeding the model its own output back in IS "autoregressive".
+        ids = torch.cat([ids, nxt], dim=1)         # (B, T) -> (B, T+1)
+    return ids                                     # (B, T0 + n_new)
 
 # smoke test
 gpt = TinyGPT(vocab=50, D=32, h=4, L=2)
