@@ -200,12 +200,24 @@ class AddCLS(nn.Module):
         B = x.shape[0]
 
         # expand (not repeat) copies the single CLS vector to every batch item WITHOUT
-        # allocating new memory — it just sets stride 0 on the batch axis. Result is a
-        # (B, 1, D) view of the same underlying parameter.
+        # allocating new memory — it just sets stride 0 on the batch axis, so all B "rows"
+        # point at the SAME underlying vector. Result is a (B, 1, D) view of the parameter.
+        #   - It is the explicit form of broadcasting (same stride-0 trick).
+        #   - It only works on size-1 axes; -1 means "keep this axis as-is". This is exactly
+        #     why the parameter is shaped (1, 1, D): the leading 1s exist to be expanded.
+        #   - Contrast repeat(B,1,1), which ALLOCATES and physically copies B times. Prefer
+        #     expand for a read-only feed like this; never write in-place to an expanded
+        #     tensor (all shared copies would change together).
         cls = self.cls.expand(B, -1, -1)    # (B, 1, D)
 
         # Concatenate along the token axis (dim=1): CLS goes first, then the 196 patches.
         # 196 + 1 = 197 tokens. CLS is now position 0.
+        #   - cat joins along ONE existing axis; every OTHER axis must match exactly. It does
+        #     NOT broadcast — that is why we expand CLS to batch B first (a (1,1,D) CLS would
+        #     fail to cat with a (B,196,D) x on the mismatched batch axis).
+        #   - Unlike view/reshape/expand, cat ALLOCATES a new contiguous buffer (it must copy
+        #     both inputs to fuse two separate buffers into one). Sibling: stack() creates a
+        #     NEW axis, cat() uses an existing one.
         x = torch.cat([cls, x], dim=1)      # (B, 197, D)
         return x
 ```
