@@ -236,6 +236,67 @@ class AddPosEmbed(nn.Module):
 
 ---
 
+### Step 3b: interpolating the position table for a new resolution
+
+The learned table has **exactly** as many rows as the pretraining grid (197 = 14×14 patches +
+CLS). Fine-tune at a higher resolution and the patch-embed still works — it is applied per patch —
+but you now have *more* patches than rows in the table. The fix interpolates the **position
+embeddings**, not the image: view the 196 patch vectors as a 14×14 grid of D-dim vectors and
+2D-resize that grid to the new patch layout. The CLS row has no spatial location, so it is kept
+aside and re-attached unchanged.
+
+```python
+import torch.nn.functional as F
+
+def interpolate_pos_embed(pos_embed, old_hw, new_hw):
+    # pos_embed: (1, 1 + old_h*old_w, D) — the LEARNED table (CLS row first).
+    # old_hw / new_hw: (h, w) patch-grid sizes, e.g. (14,14) -> (28,28).
+    old_h, old_w = old_hw
+    new_h, new_w = new_hw
+    D = pos_embed.shape[-1]
+
+    cls_pe  = pos_embed[:, :1]                  # (1, 1, D)  CLS — no spatial location, keep as-is
+    grid_pe = pos_embed[:, 1:]                  # (1, old_h*old_w, D)  the patch positions
+
+    # Recover the spatial grid and put D on the channel axis, because F.interpolate resizes
+    # the LAST TWO axes (H, W) and treats everything before them as (batch, channels).
+    grid_pe = grid_pe.reshape(1, old_h, old_w, D).permute(0, 3, 1, 2)   # (1, D, old_h, old_w)
+
+    # The actual resize: each new location's PE is a bilinear blend of its 4 nearest old PEs.
+    grid_pe = F.interpolate(grid_pe, size=(new_h, new_w),
+                            mode='bilinear', align_corners=False)        # (1, D, new_h, new_w)
+
+    # Flatten the new grid back to a token sequence and re-attach CLS.
+    grid_pe = grid_pe.permute(0, 2, 3, 1).reshape(1, new_h * new_w, D)   # (1, new_h*new_w, D)
+    return torch.cat([cls_pe, grid_pe], dim=1)                           # (1, 1 + new_h*new_w, D)
+
+# 224px (14x14) pretrain -> 448px (28x28) fine-tune
+pos_embed = torch.randn(1, 197, 768)
+new_pe = interpolate_pos_embed(pos_embed, (14, 14), (28, 28))
+print(pos_embed.shape, "->", new_pe.shape)   # torch.Size([1, 197, 768]) -> torch.Size([1, 785, 768])
+```
+
+Why *bilinear* works at all: learned position embeddings come out **spatially smooth** (adjacent
+patches learn similar vectors), so blending between them yields sensible embeddings for the new
+in-between locations. It is a warm start, not an exact answer — fine-tuning then adapts them.
+(The original ViT/DeiT papers use **bicubic**, a smoother 16-neighbour kernel; bilinear is the
+same idea with 4 neighbours.)
+
+**Could this use `transpose` + `view` instead of `permute` + `reshape`?** Yes, with two caveats —
+and both are the exact rules from the encoder note's Step 5:
+
+- **`permute` vs `transpose`:** `transpose` swaps *exactly two* axes; `permute` reorders *all* at
+  once. The `(B,H,W,D) → (B,D,H,W)` move is a 4-axis reorder, so it takes **two** transposes to
+  equal one permute: `.transpose(1, 3).transpose(2, 3)`. Same result (verified identical), but
+  `permute(0, 3, 1, 2)` says it in one line.
+- **`reshape` vs `view`:** `view` needs a **contiguous** (compatible-stride) tensor and errors
+  otherwise; `reshape` silently falls back to a copy when needed. `permute`/`transpose` return a
+  **non-contiguous** view, so the flatten-back step with `view` requires an explicit
+  `.contiguous()` first — `.permute(0, 2, 3, 1).contiguous().view(1, new_h*new_w, D)`. `reshape`
+  does that for you, which is why it is the safe default here.
+
+---
+
 ### Step 4: full ViT (front end + encoder + head)
 
 Now assemble the pieces: patch embed → CLS → pos embed → a standard transformer encoder →
