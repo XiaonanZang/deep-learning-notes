@@ -27,6 +27,9 @@ and a working, commented implementation you can run.
 - [Transformer Architecture](https://xiaonanzang.github.io/deep-learning-notes/transformers.html)
   — self-attention, softmax stability, multi-head attention, and the full encoder block,
   built step by step from token embeddings to output.
+- [The Transformer Decoder](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html)
+  — the generation half: causal masking, cross-attention, the 3-sub-layer decoder layer,
+  decoder-only (GPT) vs encoder-decoder, an autoregressive loop, and the KV cache.
 - [Vision Transformers (ViT)](https://xiaonanzang.github.io/deep-learning-notes/vision-transformers.html)
   — treating an image as a sequence of patches and feeding it through a standard
   transformer encoder.

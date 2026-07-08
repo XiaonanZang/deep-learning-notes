@@ -524,4 +524,4 @@ assert out.shape == (B, T, D)
 
 ---
 
-[← Back to contents](index.html) · [Vision Transformers →](vision-transformers.html)
+[← Back to contents](index.html) · [The Transformer Decoder →](transformer-decoder.html) · [Vision Transformers →](vision-transformers.html)
