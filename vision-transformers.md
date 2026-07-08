@@ -258,11 +258,18 @@ def interpolate_pos_embed(pos_embed, old_hw, new_hw):
     cls_pe  = pos_embed[:, :1]                  # (1, 1, D)  CLS — no spatial location, keep as-is
     grid_pe = pos_embed[:, 1:]                  # (1, old_h*old_w, D)  the patch positions
 
-    # Recover the spatial grid and put D on the channel axis, because F.interpolate resizes
-    # the LAST TWO axes (H, W) and treats everything before them as (batch, channels).
+    # Recover the spatial grid, then put D on the CHANNEL axis. F.interpolate expects a fixed
+    # layout (N, C, H, W): it leaves N and C alone, resizes only the LAST TWO axes, and resizes
+    # each channel INDEPENDENTLY (it blends across space, never across channels).
+    # Mental model: we are resizing a 14x14 "image" whose per-pixel value is a D-dim vector —
+    # so D plays the role of channels. Hence D must move into dim 1, and the (old_h, old_w) grid
+    # must be the trailing spatial dims. If D were left last, interpolate would resize (old_w, D)
+    # instead — crushing the 768 feature dims to the new size and mixing unrelated embedding
+    # components. The permute does no math; it only satisfies interpolate's channels-first contract.
     grid_pe = grid_pe.reshape(1, old_h, old_w, D).permute(0, 3, 1, 2)   # (1, D, old_h, old_w)
 
-    # The actual resize: each new location's PE is a bilinear blend of its 4 nearest old PEs.
+    # The actual resize: each of the D feature-planes is upsampled over the patch grid, and each
+    # new location's PE is a bilinear blend of its 4 nearest old PEs.
     grid_pe = F.interpolate(grid_pe, size=(new_h, new_w),
                             mode='bilinear', align_corners=False)        # (1, D, new_h, new_w)
 
