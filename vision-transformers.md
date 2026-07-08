@@ -316,6 +316,79 @@ and both are the exact rules from the encoder note's Step 5:
 
 ---
 
+### Step 3c: why random position embeddings make ViT data-hungry
+
+ViT is famously **data-hungry** (the original needed JFT-300M to beat CNNs). A big reason lives
+right here in the position embedding. A CNN has locality **baked in**: a conv kernel only sees a
+neighbourhood, and weights are shared (translation equivariance). ViT has *none* of that —
+attention is global and permutation-invariant, so the **only** thing telling it "patch (7,7) is
+next to (7,8)" is the position embedding. And a `torch.zeros`/random-init learned table encodes
+**no** spatial structure — the model has to learn 2D adjacency *from scratch, from data.*
+
+You can see the gap directly. Compare a random-init table to a **2D-sinusoidal** table (half the
+dims encode the row index, half the column) — where nearby patches are similar *by construction*:
+
+```python
+import torch, math
+
+H = W = 14; D = 768
+
+def sincos_1d(pos, d):                          # sinusoidal encoding of a 1D index
+    pe = torch.zeros(len(pos), d)
+    div = torch.exp(torch.arange(0, d, 2) * (-math.log(10000.0) / d))
+    pe[:, 0::2] = torch.sin(pos[:, None] * div)
+    pe[:, 1::2] = torch.cos(pos[:, None] * div)
+    return pe
+
+rows = torch.arange(H).repeat_interleave(W)     # (196,)
+cols = torch.arange(W).repeat(H)                # (196,)
+pe2d = torch.cat([sincos_1d(rows, D // 2), sincos_1d(cols, D // 2)], dim=1)   # (196, D)
+pe_rand = torch.randn(196, D) * 0.02            # random-init learned table (no structure)
+
+def sim_map(pe, center=(7, 7)):                 # cosine sim of the center patch to all patches
+    c = center[0] * W + center[1]
+    return torch.cosine_similarity(pe[c:c+1], pe, dim=1).reshape(H, W)
+
+print(sim_map(pe2d)[5:10, 5:10].round(decimals=2))    # 2D-sin: smooth falloff with distance
+print(sim_map(pe_rand)[5:10, 5:10].round(decimals=2)) # random: ~0 everywhere (no locality)
+```
+
+```
+2D-sinusoidal PE (center patch vs neighbours):   random-init PE (same window):
+ 0.90  0.94  0.95  0.94  0.90                      -0.05   0.04  -0.01   0.04  -0.02
+ 0.94  0.97  0.99  0.97  0.94                      -0.03  -0.01   0.00  -0.01  -0.01
+ 0.95  0.99  1.00  0.99  0.95                      -0.05   1.00  -0.02   0.01  -0.03
+ 0.94  0.97  0.99  0.97  0.94                      -0.03  -0.02  -0.01  -0.03  -0.02
+ 0.90  0.94  0.95  0.94  0.90                      -0.00  -0.00   0.02  -0.00  -0.04
+```
+
+The sinusoidal table has a clean spatial falloff (1.00 at the centre, ~0.99 for immediate
+neighbours, decaying outward) — a **soft locality prior** the model gets for free. The random
+table is ~0 everywhere: the network must *learn* that structure, which is what costs the data.
+
+**Yes, you can prepay that prior** — a well-explored family of fixes, in increasing strength:
+
+- **2D-sinusoidal init** (this demo; DETR, MoCo-v3): initialise the table so neighbours start
+  similar. Cheapest possible locality prior; freeze it or let it fine-tune.
+- **Relative position bias** (Swin): add a *learned bias to the attention score* that depends only
+  on the offset (Δrow, Δcol) between two patches — encodes "closer patches interact more" and is
+  translation-equivariant like a conv.
+- **Convolutional position encoding** (CPVT's PEG, CvT): *generate* the position signal with a
+  depthwise **conv** over the token grid — locality and translation-equivariance come for free,
+  and it handles any resolution with no interpolation (Step 3b).
+- **ConViT (GPSA):** initialise self-attention to *mimic a convolution*, with a learnable gate
+  that relaxes into full global attention as the data warrants — "start conv-like, become a
+  transformer."
+- **Conv stems / hybrids** (CoAtNet, LeViT): inject the locality bias into the *features* with a
+  few early conv layers instead of the PE.
+
+**The trade-off worth stating:** locality priors substitute inductive bias for data. They win in
+the small/medium-data regime (ImageNet-only), but too strong a bias *caps the ceiling* at extreme
+scale — which is exactly why the pure, bias-free ViT overtakes CNNs once you have JFT-300M. It is a
+**bias ↔ data trade**: a free win when data is limited, a slight constraint when it is not.
+
+---
+
 ### Step 4: full ViT (front end + encoder + head)
 
 Now assemble the pieces: patch embed → CLS → pos embed → a standard transformer encoder →
