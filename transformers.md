@@ -476,7 +476,13 @@ class TransformerEncoder(nn.Module):
     def __init__(self, vocab_size, D, h, num_layers, max_len=512):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, D)              # token ID → dense vector
-        self.pos_enc   = sinusoidal_encoding(max_len, D)          # fixed; not a learned parameter
+        # register_buffer, NOT a plain attribute. pos_enc is a fixed (non-learned) tensor, but it must
+        # still live on the same device as the model. A plain `self.pos_enc = tensor` is neither a
+        # Parameter nor a buffer, so model.to('cuda') would NOT move it — it would stay on CPU and cause
+        # a device-mismatch RuntimeError at the `x + pos_enc` step below. Registering it as a buffer means
+        # .to(device), .half(), and save/load all carry it along automatically — the same mechanism that
+        # moves BatchNorm's running_mean/running_var. Rule: fixed tensors a module needs → register_buffer.
+        self.register_buffer('pos_enc', sinusoidal_encoding(max_len, D))   # fixed positional table (not learned)
         self.layers    = nn.ModuleList([EncoderLayer(D, h) for _ in range(num_layers)])
 
     def forward(self, token_ids, mask=None):
@@ -484,7 +490,9 @@ class TransformerEncoder(nn.Module):
         T = token_ids.shape[1]
 
         x = self.embedding(token_ids)                             # (B, T, D) token embeddings
-        x = x + self.pos_enc[:T].to(x.device)                    # (B, T, D) add positional encoding
+        # No .to(x.device) needed: pos_enc is a registered buffer, so it already sits on the model's
+        # device after model.to(...). (Were it a plain tensor attribute, this line would crash on GPU.)
+        x = x + self.pos_enc[:T]                                  # (B, T, D) add positional encoding
 
         for layer in self.layers:                                 # pass through each encoder layer
             x = layer(x, mask)
