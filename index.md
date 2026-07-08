@@ -33,6 +33,12 @@ and a working, commented implementation you can run.
 - [Vision Transformers (ViT)](https://xiaonanzang.github.io/deep-learning-notes/vision-transformers.html)
   — treating an image as a sequence of patches and feeding it through a standard
   transformer encoder.
+- [Graph Attention Networks (GAT)](https://xiaonanzang.github.io/deep-learning-notes/graph-attention.html)
+  — self-attention masked by the graph's adjacency matrix: nodes attend to their neighbours,
+  with the GCN / GraphSAGE contrast and the bridge back to transformer attention.
+- [Time-Series: Causal Convolutions, TCN & Autoregressive Forecasting](https://xiaonanzang.github.io/deep-learning-notes/time-series-tcn.html)
+  — enforcing "only the past" with causal padding, dilated TCN blocks for long memory, an
+  autoregressive forecast loop, and how Chronos-style foundation models use the decoder recipe.
 
 **Cold Drills**
 
