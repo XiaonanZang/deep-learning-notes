@@ -234,6 +234,38 @@ The embedding space is shaped by a **contrastive loss** (the InfoNCE idea from t
 pull a user toward the items they actually interacted with (positives), push away from sampled
 negatives.
 
+### At scale: you never compute all pairs
+
+Scoring a user against *every* item is `O(M)` per query — impossible at millions of items. Neither
+training nor serving does it:
+
+- **Training — negative sampling.** For each positive `(user, item)` pair, sample a handful of random
+  negatives instead of scoring all items. That is exactly what InfoNCE does — cross-entropy over one
+  positive and a few sampled negatives, not the whole catalogue.
+- **Serving — Approximate Nearest Neighbour (ANN) search.** Finding the top-k items by dot product is
+  a nearest-neighbour problem, and it has mature **sublinear** index structures: graph-based **HNSW**
+  (the current default), **LSH** hashing, and **IVF + product quantization** (what **FAISS** is built
+  on). These power vector databases (FAISS, ScaNN, Pinecone, Milvus).
+
+The separation of concerns is the point: **your model learns the embeddings; an off-the-shelf library
+builds the index and serves retrieval.** The interface is just an `(M, d)` matrix:
+
+```python
+index = faiss.IndexHNSWFlat(d)         # or IndexIVFPQ for compression at scale
+index.add(item_embeddings)             # BUILD (the library's job)
+scores, ids = index.search(user_emb, k=200)   # RETRIEVE top-k, sublinear
+```
+
+Industrially this is **two-stage retrieve → rank**: ANN prunes millions to a few hundred candidates
+cheaply, then a heavier ranker scores just those precisely. And it composes with §8's inductive
+property — a **new item** gets an embedding from the inductive encoder (no retraining) and is simply
+`index.add()`-ed, immediately retrievable. (Match the index metric to the training similarity: an
+inner-product index for dot product, or normalise first for cosine.)
+
+The same machinery *is* retrieval / RAG — embed the query, ANN-search a vector DB, feed the top-k to
+an LLM. Recommendation, retrieval, and GraphRAG are one pattern: **learn embeddings, index them,
+retrieve by similarity.**
+
 ---
 
 ## 8. Predicting on graphs you have never seen: transductive vs inductive
