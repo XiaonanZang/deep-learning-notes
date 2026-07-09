@@ -4,64 +4,125 @@ title: Graph Attention Networks (GAT)
 
 # Graph Attention Networks (GAT)
 
-A GNN layer where each node updates itself by **attending to its neighbours**. The one sentence
-that connects it to everything else in these notes: **GAT is self-attention masked by the graph's
-adjacency matrix** — instead of every token attending to every token, every node attends only to
-the nodes it is connected to. Same primitive (attention), different mask (the graph).
+A GAT updates each node in a graph by **attending to its neighbours** — it is self-attention with
+the graph's adjacency matrix as its mask. But the mechanism is the easy part. The useful questions
+are *why a graph at all*, how this connects to the graph methods you already know, and how the
+learned embeddings actually get used to predict. This note goes in that order:
 
-Everything here runs. It uses a dense adjacency matrix for clarity (real libraries use sparse
-edge lists, but the math is identical).
+**why graphs → from classical graph algorithms to learned message passing → the GAT mechanism +
+code → how the embeddings get used → predicting on graphs you have never seen → two real systems.**
 
----
-
-## 1. The idea
-
-A graph has nodes with feature vectors and edges saying which nodes are connected. A GAT layer
-recomputes each node's vector as a **weighted average of its neighbours' (transformed) vectors**,
-where the weights are learned attention coefficients:
-
-- transform every node with a shared linear map `W`,
-- for node *i*, score each neighbour *j* (how much should *i* listen to *j*),
-- softmax those scores over *i*'s neighbours,
-- aggregate: node *i*'s new vector is the attention-weighted sum of its neighbours' vectors.
-
-The difference from transformer attention is **who is allowed to attend to whom**. In a
-transformer every position is a neighbour of every position (full attention). In a graph, the
-neighbours are given by the edges — so attention is **restricted to the adjacency structure**.
+Everything here runs. It uses a dense adjacency matrix for clarity (real libraries use sparse edge
+lists, but the math is identical).
 
 ---
 
-## 2. The math (additive attention)
+## 1. Why a graph? Architecture follows data structure
 
-For an edge from *j* to *i*, GAT computes an unnormalised score
+The choice of architecture follows the **structure of the data** — this is the whole reason GNNs
+exist as a separate family:
 
-```
-e_ij = LeakyReLU( aᵀ [ W h_i ‖ W h_j ] )
-```
+| Architecture | Assumes the data is a... | Examples |
+|---|---|---|
+| **CNN / UNet** | **grid** — regular, every pixel has the same 3×3 neighbourhood | images, segmentation, video |
+| **RNN / Transformer** | **sequence** — ordered, or a set with positions | text, audio, time series |
+| **GNN / GAT** | **arbitrary graph** — entities with irregular relationships | everything below |
 
-where `W` is the shared linear transform and `a` is a learned attention vector. The `‖` is
-concatenation of the two transformed endpoints. This is **additive (Bahdanau-style) attention**,
-not the dot-product attention of transformers — GAT scores a *pair* of nodes with a small MLP
-rather than a `QᵀK` inner product.
+A CNN works on an image because an image **is** a grid: fixed neighbours, a canonical order, a
+kernel you can slide. A graph has none of that — each node has a *different number* of neighbours,
+there is *no ordering*, no grid. So you cannot slide a kernel over it. GNNs generalise "aggregate
+information from your neighbours" to **irregular neighbourhoods**. That is the entire point.
 
-A useful algebra trick: because `aᵀ[Wh_i ‖ Wh_j] = a_srcᵀ(W h_i) + a_dstᵀ(W h_j)`, you can split
-`a` into a **source** half and a **destination** half and compute each node's contribution once,
-then broadcast to form all pairs. That is exactly what the implementation does.
+**The test for "is this a GNN problem?":** *are the relationships between entities part of the data,
+and not a regular grid or sequence?* If yes, it is a graph.
 
-Then normalise over *i*'s neighbours and aggregate:
+**What is actually a graph:** social networks (users / friendships), molecules (atoms / bonds),
+recommendation (users / items), knowledge graphs and GraphRAG (entities / relations), citation
+networks (papers / citations), road networks (intersections / roads), fraud rings, physics meshes.
 
-```
-α_ij = softmax_j( e_ij )   over j ∈ N(i)
-h_i' = σ( Σ_j α_ij · W h_j )
-```
-
-The adjacency matrix enters as a **mask**: non-edges get `-inf` before the softmax, so they
-receive exactly zero weight — the same `masked_fill(-inf)` trick as the causal mask in the
-[decoder note](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html).
+**Three task shapes** on a graph:
+- **Node-level** — predict a property of each node (is this user a bot? what topic is this paper?).
+- **Edge-level (link prediction)** — predict missing / future edges (friend recommendation,
+  drug–target interaction, knowledge-graph completion).
+- **Graph-level** — predict a property of the whole graph (is this molecule toxic?).
 
 ---
 
-## 3. From-scratch implementation
+## 2. From classical graph algorithms to learned message passing
+
+You have likely met graphs before as **algorithms that run on a graph with hand-designed structure
+and weights**:
+
+| Classical method | What it does | The "intelligence" is... |
+|---|---|---|
+| **Dijkstra / A\*** | shortest path given edge weights | the search algorithm; weights are given |
+| **Graph cut** (min-cut / max-flow) | energy minimisation → image segmentation (pixels = nodes) | the hand-designed energy |
+| **HMM** (Viterbi, forward–backward) | posterior over hidden states | the transition / emission probabilities you specify |
+| **Particle filter** | sequential state estimation | the motion / observation models you write |
+
+Common thread: **you design the model, then run a fixed inference or optimisation algorithm.** No
+learning from data — the graph and its weights are given.
+
+A **GNN flips exactly one thing**: instead of hand-designing the weights and running a fixed
+algorithm, it **learns node representations from data** via *message passing*. This is the same
+shift as CNN vs SIFT — hand-crafted features gave way to learned ones. Classical graph algorithms
+give way to learned graph representations.
+
+**The bridge you already own.** HMM forward–backward is a **message-passing** algorithm: each node
+passes "messages" (beliefs) to its neighbours, iteratively, until they converge. That is *belief
+propagation*. A GNN is a **learned, neural version of that**:
+
+> **GNN message passing = belief propagation where the messages are learned instead of hand-derived.**
+
+You already understand the mechanism (pass information along the edges, update each node from what
+arrives). A GNN just replaces the fixed probabilistic messages with **learned neural transformations**.
+
+---
+
+## 3. The mechanism: message passing
+
+One GNN layer, for every node *i*, does three things:
+
+1. **Message** — each neighbour *j* sends a transformed version of its feature vector.
+2. **Aggregate** — node *i* combines the incoming messages (sum / mean / attention).
+3. **Update** — node *i* forms its new vector from the aggregate.
+
+Stack **K** layers and each node sees its **K-hop** neighbourhood — one hop per layer. The
+difference between GNN variants is *only* step 2, how neighbours are combined:
+
+- **GCN** — a fixed, degree-normalised **mean** of neighbours.
+- **GraphSAGE** — sample a fixed number of neighbours, then mean / max / pool.
+- **GAT** — a **learned, attention-weighted** sum. ← this note.
+
+---
+
+## 4. GAT: attention over neighbours
+
+GAT makes step 2 an attention: node *i* learns **how much to listen to each neighbour** instead of
+averaging them equally. For an edge from *j* to *i*:
+
+```
+e_ij = LeakyReLU( aᵀ [ W h_i ‖ W h_j ] )      # unnormalised score for the pair (i, j)
+α_ij = softmax_j( e_ij )   over j ∈ N(i)       # normalise over i's neighbours
+h_i' = σ( Σ_j α_ij · W h_j )                    # attention-weighted sum of neighbours
+```
+
+`W` is a shared linear transform, `a` is a learned attention vector, `‖` is concatenation. This is
+**additive (Bahdanau-style) attention** — GAT scores a *pair* of nodes with a small MLP, rather than
+the `QᵀK` dot product of a transformer.
+
+Algebra trick used in the code: since `aᵀ[Wh_i ‖ Wh_j] = a_srcᵀ(W h_i) + a_dstᵀ(W h_j)`, split `a`
+into a **source** half and a **destination** half, compute each node's contribution once, and
+broadcast to form all pairs.
+
+**The adjacency matrix is the mask.** Non-edges get `-inf` before the softmax, so they receive
+exactly zero weight — the same `masked_fill(-inf)` trick as the causal mask in the
+[decoder note](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html). That
+single line is what makes it a *graph* attention: **tokens = nodes, mask = the graph.**
+
+---
+
+## 5. From-scratch implementation
 
 ```python
 import torch
@@ -73,7 +134,7 @@ class GATLayer(nn.Module):
         self.n_heads, self.out_dim, self.concat = n_heads, out_dim, concat
         # shared linear transform W, producing n_heads independent projections at once
         self.W = nn.Linear(in_dim, out_dim * n_heads, bias=False)
-        # the attention vector a, split into its source and destination halves (see §2)
+        # the attention vector a, split into its source and destination halves (see §4)
         self.a_src = nn.Parameter(torch.empty(n_heads, out_dim))
         self.a_dst = nn.Parameter(torch.empty(n_heads, out_dim))
         self.leaky = nn.LeakyReLU(alpha)     # the nonlinearity inside the GAT score
@@ -121,7 +182,7 @@ weight**, and node 0 attends only to {0, 1, 4} (its ring neighbours + itself).
 
 ---
 
-## 4. The bridge: GAT vs transformer attention
+## 6. GAT vs transformer attention, and vs GCN / GraphSAGE
 
 | | Transformer self-attention | GAT |
 |---|---|---|
@@ -131,30 +192,107 @@ weight**, and node 0 attends only to {0, 1, 4} (its ring neighbours + itself).
 | Multi-head | yes | yes (identical idea) |
 | "Positions" | tokens / patches / timesteps | **nodes** |
 
-So a GAT is a transformer attention layer where the attention mask **is** the adjacency matrix. A
-fully-connected graph makes GAT ≈ standard self-attention; a sparse graph restricts it. This is the
-same "attention is attention" theme as ViT (tokens = patches) and the decoder (mask = causality):
-here, **tokens = nodes, mask = the graph.**
+A fully-connected graph makes GAT ≈ standard self-attention; a sparse graph restricts it — the same
+"attention is attention" theme as ViT (tokens = patches) and the decoder (mask = causality).
 
-**Contrast with non-attention GNNs.** GCN and GraphSAGE aggregate neighbours too, but with **fixed**
-weights instead of learned attention:
-- **GCN**: normalised **mean** of neighbours (weight `1/√(dᵢdⱼ)`, degree-based, not learned).
-- **GraphSAGE**: sample a fixed number of neighbours, then mean / max / LSTM-pool them.
-- Both are implemented with **scatter/`index_add_`** over an edge list rather than a dense
-  adjacency, which is how real graph libraries scale to millions of edges.
+Against **GCN / GraphSAGE**, GAT's edge is the *learned, input-dependent* weighting: GCN uses a fixed
+degree-based mean, GraphSAGE a fixed pooling, while GAT lets each node **decide which neighbours
+matter** for the current features. (GCN/GraphSAGE scale via `scatter` / `index_add_` over sparse
+edge lists — how real libraries reach millions of edges.)
 
-GAT's contribution over these is exactly the attention: **the neighbour weights are learned and
-input-dependent**, so a node can decide which neighbours matter for the current features rather
-than weighting them all equally.
+---
+
+## 7. How the embeddings get used: dot-product similarity
+
+A GNN layer's *output* is a learned embedding per node. How does that become a prediction? The most
+common answer — and the one that ties this note to the rest — is **dot-product similarity**.
+
+Take **recommendation**. The graph is bipartite: users and items are nodes, an edge means "this user
+interacted with this item." Message passing profiles each node — a user's embedding aggregates the
+items they liked; an item's embedding aggregates the users who liked it (so *"users like me liked
+this"* is baked in by the graph). Then the affinity score is simply:
+
+```
+score(user, item) = embedding_user · embedding_item      # dot product
+```
+
+High score → recommend. Ranking all items by this score is **nearest-neighbour search in a learned
+embedding space**, and predicting a high-scoring pair *is* link prediction.
+
+This is the same primitive you have now seen four times:
+
+| Domain | "Correlate" = dot product between... |
+|---|---|
+| Attention | query · key |
+| CLIP | image embedding · text embedding |
+| Retrieval / RAG | query · document |
+| **Recommendation (GNN)** | **user · item** |
+
+All four: **learn embeddings so related things have a high dot product, unrelated things a low one.**
+The embedding space is shaped by a **contrastive loss** (the InfoNCE idea from the
+[Foundations note](https://xiaonanzang.github.io/deep-learning-notes/activations-losses-optimizers.html)):
+pull a user toward the items they actually interacted with (positives), push away from sampled
+negatives.
+
+---
+
+## 8. Predicting on graphs you have never seen: transductive vs inductive
+
+A subtle but production-defining question: the embeddings above were learned on **one known graph**.
+What happens when a **new node** appears (a new user signs up) — or the whole graph is new?
+
+- **Transductive** (original GCN, matrix factorisation, node2vec): learns a **fixed embedding per
+  node**. A new node has no embedding → you must **retrain**. Fine for a static graph, useless when
+  it grows.
+- **Inductive** (GraphSAGE, **GAT**): learns the **aggregation *function*** — the weights `W` and the
+  attention `a` — **not** per-node embeddings. A new node → gather its features and neighbours →
+  apply the learned function → embedding, **no retraining**.
+
+Look back at the code: the only parameters are `W`, `a_src`, `a_dst` — **functions of features**,
+zero per-node lookup. Feed the layer *any* node with a neighbourhood and it produces an embedding.
+That is why GAT is **inductive**, and why it works for streaming new users and for graphs it never
+saw in training.
+
+---
+
+## 9. Two systems in practice
+
+**(a) Large-scale recommendation / knowledge graphs (Huzefa's world).**
+Industrial graphs — recommendation, fraud, and knowledge graphs — are exactly where GNNs earn their
+keep (frameworks like **GraphStorm** and **GraphRAG** target enterprise-scale graphs). Take
+recommendation: hundreds of millions of user and item nodes, billions of interaction edges. A GAT
+layer profiles each node by message passing, and **attention decides which interactions matter** —
+a user's one purchase of a laptop should weigh more than fifty idle clicks. New users arrive every
+second, so the model *must* be inductive: compute the new user's embedding from their first few
+edges and score items by dot product immediately. In a knowledge graph / GraphRAG setting, the same
+machinery does **link prediction** — completing missing relations, or retrieving the relevant
+subgraph to ground an LLM's answer.
+
+**(b) The lane graph in autonomous driving (map topology).**
+An HD map is naturally a graph: **lane segments (centrelines) are nodes**, and edges encode
+connectivity — *successor*, *predecessor*, *left-neighbour*, *right-neighbour*. A GAT over this lane
+graph lets each lane node attend to the lanes it connects to, encoding **map topology**: where a
+lane leads, which lanes merge, which are legal to change into. This map encoding (LaneGCN /
+VectorNet represent the road exactly this way) becomes the context a planner or motion-prediction
+model reads to know where a vehicle *can* go. Crucially, **every map region is a different graph** —
+so this is inductive by necessity: the model learns the lane-aggregation *function* and applies it
+fresh to each new stretch of road, never a fixed per-lane embedding.
+
+Both examples share the shape of the whole note: entities become nodes, relationships become edges,
+attention learns which neighbours matter, and — because real graphs are always new — the model
+learns a *function* over neighbourhoods rather than memorising a fixed graph.
 
 ---
 
 ## The one bridge worth carrying
 
-A graph attention layer is self-attention with the adjacency matrix as its mask, and an additive
-score instead of a dot product. If you can code multi-head attention, you can code GAT — swap
-`QᵀK` for the additive score and swap the causal/full mask for the graph. Nodes, patches, tokens,
-timesteps: all the same primitive, differing only in what counts as a neighbour.
+A graph attention layer is self-attention with the adjacency matrix as its mask and an additive
+score instead of a dot product. Its message passing is a *learned* belief propagation — the same
+"pass information along the edges" you knew from HMMs, with the messages now learned. Its output is
+an embedding you compare by dot product, exactly like attention, CLIP, and retrieval. And because it
+learns a *function* over neighbourhoods (inductive), it predicts on nodes and graphs it never saw —
+new users, new roads. Nodes, patches, tokens, timesteps: the same primitive, differing only in what
+counts as a neighbour.
 
 ---
 
