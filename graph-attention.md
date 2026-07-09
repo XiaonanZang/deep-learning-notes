@@ -284,6 +284,31 @@ learns a *function* over neighbourhoods rather than memorising a fixed graph.
 
 ---
 
+## 10. Two practical gotchas: over-smoothing and scaling
+
+Two questions come up constantly about real GNNs, and both are worth having an answer to.
+
+**Over-smoothing — why GNNs are shallow.** Each layer mixes a node with its neighbours. Stack too
+many and every node has aggregated an overlapping K-hop neighbourhood; in the limit, all nodes see
+the whole graph and their embeddings **converge to the same vector** — the very thing you need to
+tell apart washes out. So unlike CNNs and transformers (dozens of layers), GNNs are usually **2–3
+layers deep**. Mitigations when you do need depth: **residual / skip connections**, **jumping
+knowledge** (combine every layer's output, not just the last), and normalisation (e.g. PairNorm).
+The one-liner: *GNNs go wide (big neighbourhoods per layer), not deep (few layers), because depth
+causes over-smoothing.*
+
+**Scaling — you cannot hold the whole graph in memory.** The dense `(N, N)` adjacency in this note is
+`O(N²)` — fine for a demo, impossible for a billion-node graph. Two things fix it:
+- **Sparse edge lists + scatter/gather** instead of a dense matrix (message passing only along real
+  edges), which is how every production library (PyG, DGL, GraphStorm) is built.
+- **Neighbour sampling** (GraphSAGE): for each node, sample a *fixed* number of neighbours per layer
+  (say 25 then 10), so per-node compute is bounded and you can **mini-batch** — train on subgraphs
+  instead of the whole graph at once. This is what makes inductive GNNs trainable at industrial
+  scale, and it pairs naturally with the inductive property from §8 (a learned function applied to
+  sampled neighbourhoods).
+
+---
+
 ## The one bridge worth carrying
 
 A graph attention layer is self-attention with the adjacency matrix as its mask and an additive
