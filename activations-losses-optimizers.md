@@ -41,6 +41,10 @@ x = torch.randn(4, 8)
 # ReLU: max(0, x). Cheap, sparse, the classic default. Dead for x < 0.
 F.relu(x)
 
+# LeakyReLU: max(αx, x) with a small negative slope α (e.g. 0.2). Leaks a little gradient
+# through negatives, so units never fully "die". Used inside the GAT attention score.
+F.leaky_relu(x, negative_slope=0.2)
+
 # GELU: smooth, ~x * sigmoid(1.7x). Standard in transformers (used in the FFN note).
 F.gelu(x)
 
@@ -74,6 +78,9 @@ to check you *understand* it rather than reach for `F.`. All verified to match t
 ```python
 def relu(x):
     return x.clamp(min=0)                 # max(0, x), elementwise
+
+def leaky_relu(x, slope=0.2):
+    return torch.where(x >= 0, x, slope * x)   # x if x>=0 else slope*x (used in GAT)
 
 def sigmoid(x):
     return 1 / (1 + torch.exp(-x))        # squash to (0, 1)
