@@ -200,6 +200,42 @@ print(out.shape)                          # torch.Size([5, 16])  = (N, H*out)
 Verified: attention rows sum to 1 over each node's neighbours, **non-edges receive exactly zero
 weight**, and node 0 attends only to {0, 1, 4} (its ring neighbours + itself).
 
+### Why the score line uses `*`+`sum`, not `@`
+
+The per-head source score `s[i,h] = Wh[i,h,:] · a_src[h,:]` is a dot product, so `@` looks natural —
+but matmul's axis convention fights this shape. `Wh @ a_src.transpose(-1,-2)` gives `(N, H, H)`:
+every head's features dotted against every *other* head's vector, when you only want the `H`
+**diagonal** (head `h` with its own `a_src[h]`). Forcing `@` to do the per-head dot means shoving `H`
+into the batch slot — `Wh.transpose(0,1) @ a_src.unsqueeze(-1)`, then squeeze/permute back. The
+`(Wh * a_src).sum(-1)` form computes exactly the `H` diagonal dots directly: broadcast `a_src` across
+the `N` axis, multiply elementwise, contract `out` — no cross-head waste, no reshaping. Equivalent and
+self-documenting: `torch.einsum('nho,ho->nh', Wh, a_src)`.
+
+**Three tools for a contraction, chosen by axis bookkeeping** (same "minimal op that fits" lens as
+reshape-vs-view):
+- **`@`** — when the shapes already fit `(…, m, k) @ (…, k, n)`, e.g. `Q @ Kᵀ`. Genuine matrix products.
+- **`(A * B).sum(dim)`** — a broadcasted **per-batch dot** along one axis, when one operand broadcasts
+  and matmul's batching would fight you (this score line).
+- **`einsum`** — when multiple free/batch dims make matmul's convention awkward (per-head vectors);
+  most explicit, no permute gymnastics.
+
+### The aggregate (`einsum`) and combining heads
+
+The aggregate `out = einsum('ijh,jhd->ihd', alpha, Wh)` contracts **only `j`** — it is the one index
+missing from the output `ihd`, so only the neighbour axis is summed. `h` appears in both inputs *and*
+the output, so it is a **carried batch axis, not contracted**; `d` and `i` ride along too. The result
+is therefore `H` **parallel, per-head** weighted sums — `out[i,h,d] = Σ_j alpha[i,j,h] · Wh[j,h,d]` —
+the heads aggregate independently and never mix here. Shape `(N, H, out)`.
+
+The heads must then be combined, and the `concat` flag chooses how, by the layer's **role**:
+- **`concat=True` (hidden layers)** — reshape `(N,H,out) → (N, H*out)`, keeping every head's output to
+  feed the next layer. This is the transformer multi-head-concat analogue (GAT just omits the `W_O`
+  projection). Cost: feature dim grows by `H`.
+- **`concat=False` (final layer)** — `mean(dim=1) → (N, out)`, giving a **fixed** output dimension (e.g.
+  `num_classes`) and **ensembling** the heads into one stable prediction.
+
+Original GAT does exactly this: **concatenate in hidden layers, average at the output.**
+
 ---
 
 ## 6. GAT vs transformer attention, and vs GCN / GraphSAGE
