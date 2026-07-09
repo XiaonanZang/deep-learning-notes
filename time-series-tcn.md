@@ -73,6 +73,26 @@ This note builds the **TCN**. It is the sweet spot for many problems: parallel t
 RNNs), cheap and local (unlike attention), with a long memory via dilation. The Transformer route is
 covered in the [decoder note](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html).
 
+### Why a TCN and not just a decoder-only transformer?
+
+The honest answer is **inductive bias**, and it decides by regime. A causal conv has a *strong*
+built-in prior — locality, translation-equivariance, recency (via left-pad) — baked into the
+architecture. Attention has a *weak* prior: it can attend anywhere, so it must **learn** locality and
+recency from data. That one difference sets the whole trade:
+
+- **TCN** — strong prior → **cheaper** (`O(T·k)` vs attention's `O(T²)`), **simpler** (no positional
+  encoding, fewer knobs), **less data-hungry**, but a **fixed receptive field** (`depth × dilation ×
+  kernel`) it cannot see beyond, and a lower ceiling.
+- **Decoder-only transformer** — weak prior → **data-hungry** and `O(T²)`, but **arbitrary
+  long-range** (the whole past, every layer) and a higher ceiling.
+
+Choose the TCN for **long, low-data, latency-sensitive, bounded-range** series (streaming / real-time
+forecasting, control). Choose the transformer for **massive-data, long-range** settings — which is
+exactly why the zero-shot forecasting foundation models in §7 (Chronos, TimesFM, Moirai) are
+decoder-only transformers, not TCNs: at that scale the "data-hungry" weakness **inverts into a
+strength**, the same way a ViT overtakes CNNs once the dataset is huge. It is not "which is better,"
+it is "which regime are you in."
+
 ---
 
 ## 4. Causal convolution and the dilated TCN block
