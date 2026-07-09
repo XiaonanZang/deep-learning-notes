@@ -77,6 +77,26 @@ propagation*. A GNN is a **learned, neural version of that**:
 You already understand the mechanism (pass information along the edges, update each node from what
 arrives). A GNN just replaces the fixed probabilistic messages with **learned neural transformations**.
 
+### 2b. The objective stayed still; the encoder evolved
+
+Zoom out and the last decade has one stable **objective** — *learn embeddings so related things have a
+high dot product* — carried by a succession of **encoders**, each matched to the structure of the data:
+
+| Data structure | Encoder that fits it | Era |
+|---|---|---|
+| sequence / co-occurrence | skip-gram (**word2vec** 2013 → **node2vec** 2014–16, transductive) | 2013–16 |
+| grid (images) | **CNN** metric learning (FaceNet 2015, SimCLR 2020) | 2012– |
+| set / sequence with learned relevance | **attention → Transformer** | 2015–17 |
+| arbitrary graph | **GAT** = attention over neighbours | 2018 |
+
+So contrastive embedding "by connection" is *old* (node2vec is literally word2vec on random walks over
+a graph), and GAT is not a new objective — it is the **attention mechanism applied to graph
+neighbourhood aggregation**. The GNN aggregator itself got progressively more expressive along the
+same line: **GCN** (fixed degree-normalised mean) → **GraphSAGE** (learned transform + fixed pooling,
+inductive + sampling) → **GAT** (learned, *input-dependent* per-neighbour weighting). That last step is
+the flexibility attention buys: a fixed mean cannot tell a meaningful neighbour from a noisy one;
+learned attention can.
+
 ---
 
 ## 3. The mechanism: message passing
@@ -285,6 +305,16 @@ zero per-node lookup. Feed the layer *any* node with a neighbourhood and it prod
 That is why GAT is **inductive**, and why it works for streaming new users and for graphs it never
 saw in training.
 
+**How a new node actually gets its embedding — you never *initialize* it, you *supply and compute*
+it.** A transductive model initialises a random per-node vector and *trains* it; an inductive model
+does neither. The new node's **features** come from its own content/attributes (a new user's profile
+or first content; a new item's description through a text encoder; a new document through the
+encoder), not a learned per-node vector. Its **edges** come from observed interactions (the user's
+first few clicks, the map's lane connectivity). You then gather both and apply the shared `W`, `a` →
+its embedding, with no retraining. Cold-start edge case: a node with features but no edges still
+embeds through its **self-loop**, sharpening as real neighbours arrive; a featureless, edgeless node
+cannot be embedded, because the function has nothing to consume.
+
 ---
 
 ## 9. Two systems in practice
@@ -338,6 +368,18 @@ causes over-smoothing.*
   instead of the whole graph at once. This is what makes inductive GNNs trainable at industrial
   scale, and it pairs naturally with the inductive property from §8 (a learned function applied to
   sampled neighbourhoods).
+
+**How big is the model, really?** Typical sizes: hidden dim **64–256** (up to ~1024 at the high end),
+**2–3 layers**, **4–8 heads**. All the message-passing weights together (every `W` and `a`) total only
+**single-digit millions of parameters** — a `W` is roughly `in_dim × out_dim × heads`, e.g. 256×256×8
+≈ 0.5M per layer. The rule stays small because it encodes a **function**, not the nodes: parameter
+count is independent of `N`, so it does not grow with the graph. When you hear a production recommender
+quoted at "billions of parameters," that mass is almost never the aggregation rule — it is the
+**transductive ID-embedding tables** (one learned vector per user-ID and item-ID). Industrial systems
+are often **hybrid**: a huge ID table (the memory hog) plus a small inductive GAT function on top. The
+expressivity, meanwhile, comes from stacking + heads + already-rich input features, not from one `W`;
+there is even a theoretical ceiling (message-passing GNNs are bounded by the Weisfeiler–Lehman test,
+which is why variants like GIN exist), but it is rarely the practical bottleneck.
 
 ---
 
