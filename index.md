@@ -8,7 +8,37 @@ From-scratch PyTorch implementations and plain-language explanations of the core
 building blocks of modern deep learning. Each note pairs the intuition, the math,
 and a working, commented implementation you can run.
 
+## Go Board — drill rotation (priority order)
+
+Work top-down: **~30 min read, ~15 min blank-file drill, repeat.** Order reflects likelihood
+and value; `✅` = a clean ~30-min from-scratch drill, `💬` = understand & explain (too big or
+conceptual to code cold). Syntax quick-reference for all of these:
+[PyTorch Reference Card § C](https://xiaonanzang.github.io/deep-learning-notes/pytorch-reference-card.html).
+
+| # | Subproblem | Read | Fit |
+|---|---|---|---|
+| 1 | Stable softmax + **multi-head attention** (the anchor) | [Transformer](https://xiaonanzang.github.io/deep-learning-notes/transformers.html) — Steps 3 & 5 | ✅ |
+| 2 | Causal masking / causal self-attention | [Decoder](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html) — §2 | ✅ |
+| 3 | **GAT layer** (attention over graph neighbours) | [Graph Attention](https://xiaonanzang.github.io/deep-learning-notes/graph-attention.html) — §5 | ✅ |
+| 4 | Causal conv / **TCN block** | [Time-Series / TCN](https://xiaonanzang.github.io/deep-learning-notes/time-series-tcn.html) — §5 | ✅ |
+| 5 | **Cross-entropy** & **InfoNCE** from scratch | [Activations/Losses](https://xiaonanzang.github.io/deep-learning-notes/activations-losses-optimizers.html) — §2b | ✅ |
+| 6 | Cross-attention (Q ≠ K/V) | [Decoder](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html) — §3 | ✅ |
+| 7 | **Training loop** | [Reference Card § B](https://xiaonanzang.github.io/deep-learning-notes/pytorch-reference-card.html) · [Activations/Losses §5](https://xiaonanzang.github.io/deep-learning-notes/activations-losses-optimizers.html) | ✅ |
+| 8 | **Custom Dataset / DataLoader** | [Reference Card § A](https://xiaonanzang.github.io/deep-learning-notes/pytorch-reference-card.html) | ✅ |
+| 9 | Encoder block (MHA + FFN + LN + residual) | [Transformer](https://xiaonanzang.github.io/deep-learning-notes/transformers.html) — Step 7 | ✅* |
+| 10 | ViT patch-embedding front-end | [Vision Transformers](https://xiaonanzang.github.io/deep-learning-notes/vision-transformers.html) | ✅ |
+| 11 | Decoder AR loop · KV cache | [Decoder](https://xiaonanzang.github.io/deep-learning-notes/transformer-decoder.html) — §6–7 | 💬 |
+
+`✅*` the encoder block is clean but on the larger side (a full block) — size down to a single
+sub-layer if the clock is tight.
+
 ## Contents
+
+**Reference**
+
+- [PyTorch Reference Card](https://xiaonanzang.github.io/deep-learning-notes/pytorch-reference-card.html)
+  — one-glance card: custom `Dataset`/`DataLoader`, the training loop, the tensor-axis
+  cheat-sheet (the "it doesn't run" antidote), and `nn.Parameter` + init.
 
 **Foundations**
 
@@ -39,19 +69,6 @@ and a working, commented implementation you can run.
 - [Time-Series: Causal Convolutions, TCN & Autoregressive Forecasting](https://xiaonanzang.github.io/deep-learning-notes/time-series-tcn.html)
   — enforcing "only the past" with causal padding, dilated TCN blocks for long memory, an
   autoregressive forecast loop, and how Chronos-style foundation models use the decoder recipe.
-
-**Cold Drills**
-
-Timed, blank-file implementation exercises. Each one pairs a realistic first attempt with a
-critique and a corrected, runnable solution — training the gap between *understanding* a
-mechanism and *typing it correctly under time pressure*.
-
-- [Multi-Head Attention from Scratch](https://xiaonanzang.github.io/deep-learning-notes/cold-drill-multi-head-attention.html)
-  — implement multi-head self-attention and a numerically stable softmax from scratch, with a
-  worked critique of the six most common bugs.
-- [Multi-Head Attention — Spaced Repetition (Pass 2)](https://xiaonanzang.github.io/deep-learning-notes/cold-drill-multi-head-attention-2.html)
-  — the same problem re-attempted cold days later. The design bugs are fixed, but it still does
-  not run — a worked example of how the failure *moves* from design to execution precision.
 
 ---
 
