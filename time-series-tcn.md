@@ -138,13 +138,13 @@ class TCNBlock(nn.Module):
         return x + y                                       # residual
 
 class TCNForecaster(nn.Module):
-    def __init__(self, ch=16, kernel=3, n_blocks=3):
+    def __init__(self, in_ch=1, ch=16, kernel=3, n_blocks=3):
         super().__init__()
-        self.inp = CausalConv1d(1, ch, 1)                                  # 1 series channel -> ch
+        self.inp = CausalConv1d(in_ch, ch, 1)                              # in_ch channels -> ch (in_ch=1 univariate, K for multivariate)
         self.blocks = nn.ModuleList(
             [TCNBlock(ch, kernel, dilation=2 ** i) for i in range(n_blocks)])  # dilations 1,2,4
-        self.head = CausalConv1d(ch, 1, 1)                                 # ch -> 1 predicted value
-    def forward(self, x):                            # x: (B, 1, T)
+        self.head = CausalConv1d(ch, 1, 1)                                 # ch -> 1 predicted (target) value
+    def forward(self, x):                            # x: (B, in_ch, T)
         h = self.inp(x)
         for b in self.blocks:
             h = b(h)
