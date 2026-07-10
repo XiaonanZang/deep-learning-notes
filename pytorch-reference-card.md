@@ -91,4 +91,81 @@ The operations that cause most cold-drill run failures, one line each. (For the 
 
 ---
 
+## E. U-Net — composing the primitives (segmentation)
+
+Segmentation = **per-pixel classification**: the output is `(B, num_classes, H, W)`, one class
+distribution per pixel. U-Net is the canonical shape — an **encoder that downsamples**, a
+**decoder that upsamples back**, and **skip connections** that hand the encoder's high-resolution
+detail to the decoder so the boundaries stay sharp. It is a clean exercise in wiring the earlier
+primitives together (`Conv2d` down, `ConvTranspose2d` up, `ModuleList`, channel-axis `cat`).
+
+```python
+import torch
+import torch.nn as nn
+
+class DoubleConv(nn.Module):
+    """(conv → BN → ReLU) × 2 — the repeating unit of every U-Net stage."""
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1), nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1), nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True),
+        )
+    def forward(self, x):
+        return self.net(x)
+
+class UNet(nn.Module):
+    def __init__(self, in_ch=3, num_classes=2, feats=(64, 128, 256, 512)):
+        super().__init__()
+        self.downs = nn.ModuleList()
+        self.ups   = nn.ModuleList()
+        self.pool  = nn.MaxPool2d(2)                       # halves H,W between encoder stages
+
+        c = in_ch                                          # encoder: DoubleConv per level
+        for f in feats:
+            self.downs.append(DoubleConv(c, f)); c = f
+
+        self.bottleneck = DoubleConv(feats[-1], feats[-1] * 2)
+
+        for f in reversed(feats):                          # decoder: up-conv, then fuse the skip
+            self.ups.append(nn.ConvTranspose2d(f * 2, f, 2, stride=2))   # 2× upsample
+            self.ups.append(DoubleConv(f * 2, f))                        # in = skip(f) + up(f)
+
+        self.head = nn.Conv2d(feats[0], num_classes, 1)    # 1×1 conv → per-pixel class logits
+
+    def forward(self, x):
+        skips = []
+        for down in self.downs:
+            x = down(x)
+            skips.append(x)                # SAVE full-res features for the skip
+            x = self.pool(x)               # then downsample
+
+        x = self.bottleneck(x)
+        skips = skips[::-1]                 # deepest skip first
+
+        for i in range(0, len(self.ups), 2):
+            x = self.ups[i](x)                         # ConvTranspose up (2×)
+            x = torch.cat([skips[i // 2], x], dim=1)   # concat skip on the CHANNEL axis (dim=1)
+            x = self.ups[i + 1](x)                     # DoubleConv fuses skip + upsampled
+
+        return self.head(x)                # (B, num_classes, H, W)
+
+m = UNet(in_ch=3, num_classes=2)
+y = m(torch.randn(1, 3, 256, 256))
+print(tuple(y.shape))                      # (1, 2, 256, 256) — per-pixel logits  (~31M params)
+```
+
+- **Encoder** halves `H,W` and doubles channels at each stage (`MaxPool2d` between `DoubleConv`s);
+  the **decoder** mirrors it, `ConvTranspose2d` doubling `H,W` back up.
+- **Skip connection = `torch.cat` on the channel axis (`dim=1`)**, *not* an add — the decoder input
+  is `skip(f) + upsampled(f) = 2f` channels, which is why each up-stage `DoubleConv` takes `f*2 → f`.
+  This is the one shape to get right; the concat is what recovers fine detail lost to pooling.
+- **`head` is a 1×1 conv** mapping the last feature map to `num_classes` — no flattening, spatial
+  size preserved, so every pixel gets its own logits vector.
+- **Loss** = `nn.CrossEntropyLoss()(logits, target)` with `logits (B,C,H,W)` and integer
+  `target (B,H,W)` — cross-entropy over pixels (PyTorch's CE accepts the spatial dims directly).
+- Same architecture is the backbone of **diffusion U-Nets** and medical/industrial segmentation.
+
+---
+
 [← Back to contents](https://xiaonanzang.github.io/deep-learning-notes/index.html)
