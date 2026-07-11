@@ -70,6 +70,20 @@ sub-layer if the clock is tight.
   — enforcing "only the past" with causal padding, dilated TCN blocks for long memory, an
   autoregressive forecast loop, and how Chronos-style foundation models use the decoder recipe.
 
+**Applied Domain — Physical AI & Robot Learning**
+
+- [The Physical AI Data Layer](https://xiaonanzang.github.io/deep-learning-notes/physical-ai-data-layer.html)
+  — why data, not architecture, is the bottleneck for robot learning, and what a "data layer for
+  physical AI" (curation, validation, policy-fit) actually means.
+- [Robot Learning Data](https://xiaonanzang.github.io/deep-learning-notes/robot-learning-data.html)
+  — imitation learning and the data side of manipulation: how demonstrations are collected, the
+  key datasets (DROID, Ego4D, EgoMimic, MimicLabs), the embodiment gap, and what makes data
+  "policy-fit."
+- [Auto-labeling & the Evidence Pipeline](https://xiaonanzang.github.io/deep-learning-notes/auto-labeling-evidence-pipeline.html)
+  — how foundation models (SAM, DINO, video-text embeddings) draft masks, tracks, and embeddings
+  that humans review; vector-DB retrieval as the backbone; and why model output is treated as
+  evidence, not automatic ground truth.
+
 ---
 
 *These notes are written to be read in short sittings. Each section stands on its own.*
